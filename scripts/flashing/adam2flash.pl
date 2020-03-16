@@ -21,6 +21,7 @@
 #
 
 use IO::Socket::INET;
+use IO::Select;
 use Socket;
 use strict;
 use warnings;
@@ -33,9 +34,6 @@ sub usage() {
 my $ip = shift @ARGV;
 $ip and $ip =~ /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/ or usage();
 
-my $probe = IO::Socket::INET->new(Proto => 'udp',
-                                  Broadcast => 1,
-                                  LocalPort => 5035) or die "socket: $!";
 my $setip = unpack("N", inet_aton($ip));
 $setip > 0 or usage();
 
@@ -44,92 +42,129 @@ foreach my $ver ([18, 1], [22, 2]) {
 	push @packets, pack("vCCVNV", 0, @$ver, 1, $setip, 0);
 }
 print STDERR "Looking for device: ";
-my $broadcast = sockaddr_in(5035, INADDR_BROADCAST);
 my $scanning;
 my $box;
 
-$SIG{"ALRM"} = sub {
-	return if --$scanning <= 0;
-	foreach my $packet (@packets) {
-		$probe->send($packet, 0, $broadcast);
-	}
-	print STDERR ".";
-};
+my $probe = IO::Socket::INET->new(Proto => 'udp',
+                                  Broadcast => 1,
+                                  LocalAddr => $ip,
+                                  LocalPort => 5035) or die "socket: $!";
+my $sel = IO::Select->new($probe);
+my $packet = pack("vCCVNV", 0, 18, 1, 1, 0, 0);
+my $broadcast = sockaddr_in(5035, INADDR_BROADCAST);
 
-$scanning = 10;
-foreach my $packet (@packets) {
-	$probe->send($packet, 0, $broadcast);
-}
-print STDERR ".";
+$probe->send($packet, 0, $broadcast);
 
+
+scan_again:
+print "Looking for Fritz!Box ";
+my @boxes = ();
+my $peer;
+$scanning = 100;
+print "o";
 while($scanning) {
-	my $reply;
+  my $reply;
+  my @ready;
 
-	alarm(1);
-	if (my $peer = $probe->recv($reply, 16)) {
-		next if (length($reply) < 16);
-		my ($port, $addr) = sockaddr_in($peer);
-		my ($major, $minor1, $minor2, $code, $addr2) = unpack("vCCVV", $reply);
-		$addr2 = pack("N", $addr2);
-		if ($code == 2) {
-			$scanning = 0;
-			printf STDERR " found!\nADAM2 version $major.$minor1.$minor2 at %s (%s)\n", inet_ntoa($addr), inet_ntoa($addr2);
-			$box = inet_ntoa($addr);
-		}
-	}
+  if (@ready = $sel->can_read(0.2)) {
+    $peer = $probe->recv($reply, 16);
+    next if (length($reply) < 16);
+    my ($port, $addr) = sockaddr_in($peer);
+    my ($major, $minor1, $minor2, $code, $addr2) = unpack("vCCVV", $reply);
+    $addr2 = pack("N", $addr2);
+    if ($code == 2) {
+      print "O";
+      push @boxes, [$major, $minor1, $minor2, $addr, $addr2];
+      $scanning = 2 if ($scanning > 2);
+    }
+  } else {
+    $scanning--;
+    if (scalar @boxes == 0) {
+      $probe->send($packet, 0, $broadcast);
+      print "o";
+    } else {
+      print ".";
+    }
+  }
 }
 
-$box or die " not found!\n";
+if (scalar @boxes == 0) {
+  print " none found, giving up.\n";
+  exit 1;
+} else {
+  print " found!\n";
+}
 
 {
-	package ADAM2FTP;
-	use base qw(Net::FTP);
-	
-	# ADAM2 requires upper case commands, some brain dead firewall doesn't ;-)
-	sub _USER {
-		shift->command("USER",@_)->response()
-	}
-	
-	sub _GETENV {
-		my $ftp = shift;
-		my ($ok, $name, $value);
-		
-		$ftp->command("GETENV",@_);
-			while(length($ok = $ftp->response()) < 1) {
-			my $line = $ftp->getline();
-			unless (defined($value)) {
-				chomp($line);
-				($name, $value) = split(/\s+/, $line, 2);
-			}
-		}
-		$ftp->debug_print(0, "getenv: $value\n")
-		if $ftp->debug();
-		return $value;
-	}
-	
-	sub getenv {
-		my $ftp = shift;
-		my $name = shift;
-		return $ftp->_GETENV($name);
-	}
-	
-	sub _REBOOT {
-		shift->command("REBOOT")->response() == Net::FTP::CMD_OK
-	}
-	
-	sub reboot {
-		my $ftp = shift;
-		$ftp->_REBOOT;
-		$ftp->close;
-	}
+  package ADAM2FTP;
+  use base qw(Net::FTP);
+  # ADAM2 requires upper case commands, some brain dead firewall doesn't ;-)
+  sub _USER { shift->command("USER",@_)->response() }
+  sub _PASV { shift->command("P\@SW")->response() == Net::FTP::CMD_OK }
+  sub _GETENV {
+    my $ftp = shift;
+    my ($ok, $name, $value);
+
+    $ftp->command("GETENV",@_);
+    while(length($ok = $ftp->response()) < 1) {
+      my $line = $ftp->getline();
+      unless (defined($value)) {
+        chomp($line);
+        ($name, $value) = split(/\s+/, $line, 2);
+      }
+    }
+    $ftp->debug_print(0, "getenv: $value\n")
+      if $ftp->debug();
+    return $value;
+  }
+  sub getenv {
+    my $ftp = shift;
+    my $name = shift;
+    return $ftp->_GETENV($name);
+  }
+  sub _REBOOT { shift->command("REBOOT")->response() == Net::FTP::CMD_OK }
+  sub reboot {
+    my $ftp = shift;
+    $ftp->_REBOOT;
+    $ftp->close;
+  }
+  sub check {
+    my $ftp = shift;
+    
+    delete ${*$ftp}{'net_ftp_port'};
+    delete ${*$ftp}{'net_ftp_pasv'};
+
+    my $data = $ftp->_data_cmd('CHECK' ,@_) or return undef;
+    my $sum;
+    if (${${*$ftp}{'net_cmd_resp'}}[0] =~ /^Flash check 0x([0-9A-F]{8})/) {
+      $sum = hex($1);
+    }
+    $data->_close();
+    return $sum;
+  }
 }
+
+# passive mode geht mit Net::FTP nicht, connected zu spaet fuer ADAM2!
+my $ftp = ADAM2FTP->new($ip, Passive => 0, Debug => 0, Timeout => 600)
+  or die "can't FTP ADAM2";
+$ftp->login("adam2", "adam2") or die "can't login adam2";
+$ftp->binary();
+my $pid   = $ftp->getenv('ProductID');
+my $hwrev = $ftp->getenv('HWRevision');
+my $fwrev = $ftp->getenv('firmware_info');
+my $ulrev = $ftp->getenv('urlader-version');
+
+print "Product ID: $pid\n";
+print "Hardware Revision: $hwrev\n";
+print "Urlader  Revision: $ulrev\n";
+print "Firmware Revision: $fwrev\n";
+
+$ftp->hash(\*STDOUT, 64 * 1024);
 
 my $file = shift @ARGV;
 $file || exit 0;
 
 open FILE, "<$file" or die "can't open firmware file\n";
-my $ftp = ADAM2FTP->new($box, Debug => 0, Timeout => 600) or die "can't open control connection\n";
-$ftp->login("adam2", "adam2") or die "can't login\n";
 
 my $mtd0 = $ftp->getenv("mtd0");
 my $mtd1 = $ftp->getenv("mtd1");
