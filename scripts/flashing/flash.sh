@@ -64,3 +64,4 @@ echo Flashing 192.168.10.1 using $1...
 echo -en "rexmt 1\ntrace\nbinary\nput $1\nquit\n" | tftp 192.168.10.1
 echo Unit will automatically reboot within 5 minutes.  Do not power off.  Then you can login via telnet 192.168.10.1.
 fi
+
