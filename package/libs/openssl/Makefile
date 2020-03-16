@@ -410,4 +410,3 @@ $(eval $(call BuildPackage,libopenssl-afalg))
 $(eval $(call BuildPackage,libopenssl-devcrypto))
 $(eval $(call BuildPackage,libopenssl-padlock))
 $(eval $(call BuildPackage,openssl-util))
-
