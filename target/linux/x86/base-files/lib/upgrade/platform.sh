@@ -1,3 +1,5 @@
+RAMFS_COPY_BIN='grub-bios-setup'
+
 platform_check_image() {
 	local diskdev partdev diff
 	[ "$#" -gt 1 ] && return 1
@@ -39,8 +41,29 @@ platform_copy_config() {
 
 	if export_partdevice partdev 1; then
 		mount -t ext4 -o rw,noatime "/dev/$partdev" /mnt
-		cp -af "$CONF_TAR" /mnt/
+		cp -af "$UPGRADE_BACKUP" "/mnt/$BACKUP_FILE"
 		umount /mnt
+	fi
+}
+
+platform_do_bootloader_upgrade() {
+	local bootpart
+	local diskdev="$1"
+
+	if export_partdevice bootpart 1; then
+		mkdir -p /tmp/boot
+		mount -o rw,noatime "/dev/$bootpart" /tmp/boot
+		echo "(hd0) /dev/$diskdev" > /tmp/device.map
+
+		echo "Upgrading bootloader on /dev/$diskdev..."
+		grub-bios-setup \
+			-m "/tmp/device.map" \
+			-d "/tmp/boot/boot/grub" \
+			-r "hd0,msdos1" \
+			"/dev/$diskdev" \
+		&& touch /boot/grub/upgraded
+
+		umount /tmp/boot
 	fi
 }
 
@@ -54,7 +77,7 @@ platform_do_upgrade() {
 
 	sync
 
-	if [ "$SAVE_PARTITIONS" = "1" ]; then
+	if [ "$UPGRADE_OPT_SAVE_PARTITIONS" = "1" ]; then
 		get_partitions "/dev/$diskdev" bootdisk
 
 		#extract the boot sector from the image
@@ -92,4 +115,6 @@ platform_do_upgrade() {
 	#copy partition uuid
 	echo "Writing new UUID to /dev/$diskdev..."
 	get_image "$@" | dd of="/dev/$diskdev" bs=1 skip=440 count=4 seek=440 conv=fsync
+
+	platform_do_bootloader_upgrade "$diskdev"
 }

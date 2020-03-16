@@ -52,7 +52,7 @@ define Device/alfa-network_tube-e4g
   DEVICE_VENDOR := ALFA Network
   DEVICE_MODEL := Tube-E4G
   DEVICE_PACKAGES := kmod-usb2 kmod-usb-ohci uboot-envtools uqmi -iwinfo \
-	-kmod-rt2800-soc -wpad-openssl
+	-kmod-rt2800-soc -wpad-basic
 endef
 TARGET_DEVICES += alfa-network_tube-e4g
 
@@ -611,6 +611,7 @@ define Device/netgear_ex2700
   DEVICE_VENDOR := NETGEAR
   DEVICE_MODEL := EX2700
   SUPPORTED_DEVICES += ex2700
+  DEFAULT := n
 endef
 TARGET_DEVICES += netgear_ex2700
 
@@ -941,6 +942,18 @@ define Device/tplink_re200-v1
   TPLINK_FLASHLAYOUT := 8Mmtk
 endef
 TARGET_DEVICES += tplink_re200-v1
+
+define Device/tplink_re210-v1
+  $(Device/tplink-v1)
+  SOC := mt7620a
+  DEVICE_MODEL := RE210
+  DEVICE_VARIANT := v1
+  DEVICE_PACKAGES := kmod-mt76x0e
+  IMAGE_SIZE := 7936k
+  TPLINK_HWID := 0x02100001
+  TPLINK_FLASHLAYOUT := 8Mmtk
+endef
+TARGET_DEVICES += tplink_re210-v1
 
 define Device/vonets_var11n-300
   SOC := mt7620n

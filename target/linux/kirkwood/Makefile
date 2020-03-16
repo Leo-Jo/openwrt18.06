@@ -11,9 +11,8 @@ BOARD:=kirkwood
 BOARDNAME:=Marvell Kirkwood
 FEATURES:=usb nand squashfs ramdisk
 CPU_TYPE:=xscale
-MAINTAINER:=Luka Perkov <luka@openwrt.org>
 
-KERNEL_PATCHVER:=4.14
+KERNEL_PATCHVER:=5.4
 
 include $(INCLUDE_DIR)/target.mk
 
